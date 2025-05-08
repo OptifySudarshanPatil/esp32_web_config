@@ -13,12 +13,12 @@ class BLEService {
         this.sensorCharacteristic = null;
         this.otaCharacteristic = null;
         
-        // UUIDs for our service and characteristics (must match ESP32 firmware)
-        this.serviceUUID = '180a'; // Device Information
-        this.configCharUUID = '2a25'; // Serial Number (for config data)
-        this.updateCharUUID = '2a26'; // Firmware Revision (for updates)
-        this.sensorCharUUID = '2a27'; // Hardware Revision (for sensor data)
-        this.otaCharUUID = '2a28'; // Software Revision (for OTA)
+        // UUIDs for our service and characteristics (using full 128-bit format for Web Bluetooth compatibility)
+        this.serviceUUID = '0000180a-0000-1000-8000-00805f9b34fb'; // Device Information
+        this.configCharUUID = '00002a25-0000-1000-8000-00805f9b34fb'; // Serial Number (for config data)
+        this.updateCharUUID = '00002a26-0000-1000-8000-00805f9b34fb'; // Firmware Revision (for updates)
+        this.sensorCharUUID = '00002a27-0000-1000-8000-00805f9b34fb'; // Hardware Revision (for sensor data)
+        this.otaCharUUID = '00002a28-0000-1000-8000-00805f9b34fb'; // Software Revision (for OTA)
         
         // Listeners
         this.connectionListeners = [];
