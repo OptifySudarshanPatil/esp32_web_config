@@ -19,6 +19,7 @@ class BLEService {
         this.disconnectionListeners = [];
         this.dataUpdateListeners = [];
         this.wifiScanListeners = [];
+        this.wifiStatusListeners = [];
     }
     
     /**
@@ -205,6 +206,17 @@ class BLEService {
                 return;
             }
             
+            // Check for WiFi connection status updates
+            if (data.status === 'credentials_received' || 
+                data.status === 'wifi_connecting' || 
+                data.status === 'wifi_connected' || 
+                data.status === 'wifi_disconnected' ||
+                data.status === 'error') {
+                
+                this.notifyWiFiStatusListeners(data);
+                return;
+            }
+            
         } catch (e) {
             // If not JSON, return as string value
             data = { value: dataJson };
@@ -269,6 +281,13 @@ class BLEService {
         this.wifiScanListeners.push(listener);
     }
     
+    addWiFiStatusListener(listener) {
+        if (!this.wifiStatusListeners) {
+            this.wifiStatusListeners = [];
+        }
+        this.wifiStatusListeners.push(listener);
+    }
+    
     notifyConnectionListeners() {
         this.connectionListeners.forEach(listener => listener(this.device));
     }
@@ -285,5 +304,11 @@ class BLEService {
         if (!this.wifiScanListeners) return;
         
         this.wifiScanListeners.forEach(listener => listener(data));
+    }
+    
+    notifyWiFiStatusListeners(data) {
+        if (!this.wifiStatusListeners) return;
+        
+        this.wifiStatusListeners.forEach(listener => listener(data));
     }
 }

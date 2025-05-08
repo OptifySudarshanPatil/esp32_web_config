@@ -23,10 +23,14 @@ float temperature = 25.0;
 float humidity = 50.0;
 int batteryLevel = 100;
 
+// Device connection state
+bool deviceConnected = false;
+
 void updateWiFiStatus();
 void saveWiFiCredentials(const char* ssid, const char* password);
 void loadWiFiCredentials();
 void connectToWiFi();
+void connectToWiFiAsync();
 void updateSensorData();
 void scanWiFiNetworks();
 void sendWiFiScanResults();
@@ -34,19 +38,29 @@ void sendWiFiScanResults();
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) {
     Serial.println("Client connected");
+    deviceConnected = true;
     // Send current status when a client connects
     updateSensorData();
   }
   void onDisconnect(NimBLEServer* pServer) {
     Serial.println("Client disconnected");
+    deviceConnected = false;
   }
 };
 
 class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* pChar) {
     std::string val = pChar->getValue();
-    Serial.print("Received: ");
+    Serial.print("Received data: ");
     Serial.println(val.c_str());
+    
+    // Debugging - print byte by byte
+    Serial.print("Received raw bytes: ");
+    for (int i = 0; i < val.length(); i++) {
+      Serial.print((uint8_t)val[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
     
     // Parse JSON data
     DynamicJsonDocument doc(1024);
@@ -55,6 +69,19 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
     if (error) {
       Serial.print("deserializeJson() failed: ");
       Serial.println(error.c_str());
+      
+      // Send error feedback to client
+      DynamicJsonDocument errorDoc(256);
+      errorDoc["status"] = "error";
+      errorDoc["message"] = String("JSON parse error: ") + error.c_str();
+      
+      String jsonString;
+      serializeJson(errorDoc, jsonString);
+      
+      if (deviceConnected) {
+        pCharacteristic->setValue(jsonString.c_str());
+        pCharacteristic->notify();
+      }
       return;
     }
     
@@ -75,17 +102,34 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
         wifi_password = "";
       }
       
-      Serial.print("Received WiFi SSID: ");
-      Serial.println(wifi_ssid);
+      Serial.print("Received WiFi SSID: '");
+      Serial.print(wifi_ssid);
+      Serial.println("'");
+      
+      Serial.print("Received WiFi password: '");
+      Serial.print(wifi_password);
+      Serial.println("'");
+      
+      // Send acknowledgment to client
+      DynamicJsonDocument ackDoc(256);
+      ackDoc["status"] = "credentials_received";
+      ackDoc["wifi_ssid"] = wifi_ssid;
+      ackDoc["message"] = "WiFi credentials received, attempting to connect";
+      
+      String jsonString;
+      serializeJson(ackDoc, jsonString);
+      
+      if (deviceConnected) {
+        pCharacteristic->setValue(jsonString.c_str());
+        pCharacteristic->notify();
+      }
       
       // Save the credentials
       saveWiFiCredentials(wifi_ssid.c_str(), wifi_password.c_str());
       
-      // Try to connect with new credentials
-      connectToWiFi();
-      
-      // Update the sensor data with new WiFi status
-      updateSensorData();
+      // Try to connect with new credentials - do this in the background
+      // to not block further BLE communication
+      connectToWiFiAsync();
     }
   }
 };
@@ -142,17 +186,81 @@ void connectToWiFi() {
   }
 }
 
+void connectToWiFiAsync() {
+  if (wifi_ssid.length() == 0) {
+    Serial.println("No WiFi SSID configured");
+    wifi_connected = false;
+    return;
+  }
+  
+  Serial.print("Connecting to WiFi asynchronously: ");
+  Serial.println(wifi_ssid);
+  
+  WiFi.disconnect();
+  delay(100);
+  WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+  
+  // Send connection attempt notification
+  DynamicJsonDocument doc(256);
+  doc["status"] = "wifi_connecting";
+  doc["wifi_ssid"] = wifi_ssid;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  if (deviceConnected) {
+    pCharacteristic->setValue(jsonString.c_str());
+    pCharacteristic->notify();
+  }
+}
+
 void updateWiFiStatus() {
+  static bool lastWiFiConnected = false;
   wifi_connected = (WiFi.status() == WL_CONNECTED);
   
-  if (wifi_connected) {
-    Serial.print("WiFi connected. IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi disconnected");
-    // Try to reconnect if we have credentials
-    if (wifi_ssid.length() > 0) {
-      connectToWiFi();
+  // Only send updates when the connection state changes
+  if (wifi_connected != lastWiFiConnected) {
+    lastWiFiConnected = wifi_connected;
+    
+    if (wifi_connected) {
+      Serial.print("WiFi connected. IP: ");
+      Serial.println(WiFi.localIP());
+      
+      // Send connection success notification
+      if (deviceConnected) {
+        DynamicJsonDocument doc(256);
+        doc["status"] = "wifi_connected";
+        doc["wifi_ssid"] = wifi_ssid;
+        doc["ip_address"] = WiFi.localIP().toString();
+        doc["rssi"] = WiFi.RSSI();
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        
+        pCharacteristic->setValue(jsonString.c_str());
+        pCharacteristic->notify();
+      }
+    } else {
+      Serial.println("WiFi disconnected");
+      
+      // Send disconnection notification
+      if (deviceConnected) {
+        DynamicJsonDocument doc(256);
+        doc["status"] = "wifi_disconnected";
+        doc["wifi_ssid"] = wifi_ssid;
+        doc["message"] = "WiFi connection lost";
+        
+        String jsonString;
+        serializeJson(doc, jsonString);
+        
+        pCharacteristic->setValue(jsonString.c_str());
+        pCharacteristic->notify();
+      }
+      
+      // Try to reconnect if we have credentials
+      if (wifi_ssid.length() > 0) {
+        connectToWiFi();
+      }
     }
   }
 }
@@ -173,14 +281,35 @@ void scanWiFiNetworks() {
   String jsonString;
   serializeJson(doc, jsonString);
   
-  pCharacteristic->setValue(jsonString.c_str());
-  pCharacteristic->notify();
+  Serial.println("DEBUG: Sending scan notification to client");
+  if (deviceConnected) {
+    pCharacteristic->setValue(jsonString.c_str());
+    pCharacteristic->notify();
+    Serial.println("DEBUG: Scan notification sent");
+  } else {
+    Serial.println("DEBUG: Client not connected, can't send notification");
+  }
   
   Serial.println("Starting WiFi scan...");
   
   // Perform WiFi scan
-  int networksFound = WiFi.scanNetworks();
+  WiFi.disconnect();
+  WiFi.scanDelete(); // Clear previous scan results
+  Serial.println("DEBUG: Beginning WiFi scan (async)");
+  int networksFound = WiFi.scanNetworks(true); // Async scan
   
+  // Wait for scan to complete with timeout
+  unsigned long scanStartTime = millis();
+  while (WiFi.scanComplete() < 0 && millis() - scanStartTime < 10000) {
+    delay(100);
+    // Print a dot every second to show progress
+    if (millis() % 1000 < 100) {
+      Serial.print(".");
+    }
+  }
+  Serial.println();
+  
+  networksFound = WiFi.scanComplete();
   Serial.print("Scan complete. Found ");
   Serial.print(networksFound);
   Serial.println(" networks");
@@ -188,6 +317,7 @@ void scanWiFiNetworks() {
   sendWiFiScanResults();
   
   wifi_scanning = false;
+  Serial.println("DEBUG: WiFi scanning finished");
 }
 
 void sendWiFiScanResults() {

@@ -89,6 +89,11 @@ class UIController {
         this.bleService.addWiFiScanListener((data) => {
             this.handleWiFiScanResults(data);
         });
+        
+        // WiFi status updates listener
+        this.bleService.addWiFiStatusListener((data) => {
+            this.handleWiFiStatusUpdate(data);
+        });
     }
     
     /**
@@ -125,6 +130,75 @@ class UIController {
             // If this is the last packet, display all networks
             if (data.packet === data.total_packets) {
                 this.displayWiFiNetworks();
+            }
+        }
+    }
+    
+    /**
+     * Handle WiFi status updates from ESP32
+     * @param {Object} data - WiFi status data
+     */
+    handleWiFiStatusUpdate(data) {
+        console.log('Received WiFi status update:', data);
+        
+        // Update connection status display
+        if (this.wifiConnectionStatus) {
+            let statusHtml = '';
+            
+            switch(data.status) {
+                case 'credentials_received':
+                    statusHtml = `
+                        <div class="alert alert-info">
+                            Received credentials for "${data.wifi_ssid}". 
+                            Attempting to connect...
+                        </div>
+                    `;
+                    break;
+                    
+                case 'wifi_connecting':
+                    statusHtml = `
+                        <div class="alert alert-info">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                                <span class="visually-hidden">Connecting...</span>
+                            </div>
+                            Connecting to "${data.wifi_ssid}"...
+                        </div>
+                    `;
+                    break;
+                    
+                case 'wifi_connected':
+                    statusHtml = `
+                        <div class="alert alert-success">
+                            <i class="material-icons">wifi</i>
+                            Connected to "${data.wifi_ssid}" 
+                            <br>IP: ${data.ip_address || 'Unknown'}
+                            <br>Signal strength: ${data.rssi} dBm
+                        </div>
+                    `;
+                    break;
+                    
+                case 'wifi_disconnected':
+                    statusHtml = `
+                        <div class="alert alert-warning">
+                            <i class="material-icons">wifi_off</i>
+                            Disconnected from WiFi
+                            ${data.message ? `<br>${data.message}` : ''}
+                        </div>
+                    `;
+                    break;
+                    
+                case 'error':
+                    statusHtml = `
+                        <div class="alert alert-danger">
+                            <i class="material-icons">error</i>
+                            Error: ${data.message || 'Unknown error'}
+                        </div>
+                    `;
+                    break;
+            }
+            
+            if (statusHtml) {
+                this.wifiConnectionStatus.innerHTML = statusHtml;
             }
         }
     }
@@ -244,44 +318,47 @@ class UIController {
             return;
         }
         
-        // Update WiFi connection status if available
-        if (data.wifi_connected !== undefined && this.wifiConnectionStatus) {
-            if (data.wifi_connected) {
-                this.wifiConnectionStatus.innerHTML = `
-                    <div class="alert alert-success">
-                        Connected to ${data.wifi_ssid}<br>
-                        IP: ${data.ip_address || 'Unknown'}
-                    </div>
-                `;
-            } else {
-                this.wifiConnectionStatus.innerHTML = `
-                    <div class="alert alert-warning">
-                        Not connected to WiFi
-                    </div>
-                `;
-            }
-        }
+        // Only process data with status field
+        if (!data.status) return;
         
-        // If it's a config object with WiFi settings
-        if (data.wifi_ssid !== undefined && this.wifiSSIDInput) {
-            this.wifiSSIDInput.value = data.wifi_ssid || '';
+        // For sensor updates, we don't want to override user input in the SSID field
+        // if they're in the middle of configuring a new network
+        if (data.status === 'sensor_update') {
+            // Update WiFi connection status if available
+            if (data.wifi_connected !== undefined && this.wifiConnectionStatus) {
+                if (data.wifi_connected) {
+                    this.wifiConnectionStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            Connected to ${data.wifi_ssid}<br>
+                            IP: ${data.ip_address || 'Unknown'}
+                        </div>
+                    `;
+                } else {
+                    this.wifiConnectionStatus.innerHTML = `
+                        <div class="alert alert-warning">
+                            Not connected to WiFi
+                        </div>
+                    `;
+                }
+            }
             
-            if (data.wifi_password) {
-                this.wifiPasswordInput.value = data.wifi_password === '*****' ? '' : data.wifi_password;
+            // Only update the SSID input if it's empty and we have a value from the device
+            if (data.wifi_ssid && this.wifiSSIDInput && this.wifiSSIDInput.value === '') {
+                this.wifiSSIDInput.value = data.wifi_ssid || '';
             }
-        }
-        
-        // If it has sensor readings
-        if (data.temperature !== undefined && this.temperatureElement) {
-            this.temperatureElement.textContent = data.temperature.toFixed(1) + '°C';
-        }
-        
-        if (data.humidity !== undefined && this.humidityElement) {
-            this.humidityElement.textContent = data.humidity.toFixed(1) + '%';
-        }
-        
-        if (data.batteryLevel !== undefined && this.batteryLevelElement) {
-            this.batteryLevelElement.textContent = data.batteryLevel + '%';
+            
+            // Update sensor readings
+            if (data.temperature !== undefined && this.temperatureElement) {
+                this.temperatureElement.textContent = data.temperature.toFixed(1) + '°C';
+            }
+            
+            if (data.humidity !== undefined && this.humidityElement) {
+                this.humidityElement.textContent = data.humidity.toFixed(1) + '%';
+            }
+            
+            if (data.batteryLevel !== undefined && this.batteryLevelElement) {
+                this.batteryLevelElement.textContent = data.batteryLevel + '%';
+            }
         }
     }
     
@@ -294,6 +371,9 @@ class UIController {
             this.clearDeviceList();
             
             const devices = await this.bleService.scan();
+            
+            // Close the message modal after scanning completes
+            this.messageModal.hide();
             
             if (devices.length === 0) {
                 this.showMessage('No Devices Found', 'No ESP32 devices were found. Make sure your device is powered on and in range.');
@@ -310,6 +390,7 @@ class UIController {
                 this.connectToDevice(devices[0]);
             }
         } catch (error) {
+            this.messageModal.hide(); // Hide the scanning modal
             this.showMessage('Error', `Failed to scan for devices: ${error.message}`);
         }
     }
