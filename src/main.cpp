@@ -16,6 +16,7 @@ Preferences preferences;
 String wifi_ssid = "";
 String wifi_password = "";
 bool wifi_connected = false;
+bool wifi_scanning = false;
 
 // Simulated sensor data
 float temperature = 25.0;
@@ -27,6 +28,8 @@ void saveWiFiCredentials(const char* ssid, const char* password);
 void loadWiFiCredentials();
 void connectToWiFi();
 void updateSensorData();
+void scanWiFiNetworks();
+void sendWiFiScanResults();
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) {
@@ -52,6 +55,13 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
     if (error) {
       Serial.print("deserializeJson() failed: ");
       Serial.println(error.c_str());
+      return;
+    }
+    
+    // Check if this is a scan request
+    if (doc.containsKey("command") && doc["command"] == "scan_wifi") {
+      Serial.println("WiFi scan requested from app");
+      scanWiFiNetworks();
       return;
     }
     
@@ -147,6 +157,94 @@ void updateWiFiStatus() {
   }
 }
 
+void scanWiFiNetworks() {
+  if (wifi_scanning) {
+    Serial.println("WiFi scan already in progress");
+    return;
+  }
+  
+  wifi_scanning = true;
+  
+  // Send scan starting notification
+  DynamicJsonDocument doc(256);
+  doc["status"] = "scanning";
+  doc["message"] = "WiFi scan started";
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  pCharacteristic->setValue(jsonString.c_str());
+  pCharacteristic->notify();
+  
+  Serial.println("Starting WiFi scan...");
+  
+  // Perform WiFi scan
+  int networksFound = WiFi.scanNetworks();
+  
+  Serial.print("Scan complete. Found ");
+  Serial.print(networksFound);
+  Serial.println(" networks");
+  
+  sendWiFiScanResults();
+  
+  wifi_scanning = false;
+}
+
+void sendWiFiScanResults() {
+  int networksFound = WiFi.scanComplete();
+  
+  if (networksFound <= 0) {
+    // No networks found or scan not complete
+    DynamicJsonDocument doc(256);
+    doc["status"] = "scan_complete";
+    doc["networks_found"] = 0;
+    
+    String jsonString;
+    serializeJson(doc, jsonString);
+    
+    pCharacteristic->setValue(jsonString.c_str());
+    pCharacteristic->notify();
+    return;
+  }
+  
+  // We might need to send multiple packets if there are many networks
+  // due to BLE MTU size limitations
+  const int maxNetworksPerPacket = 5;
+  int packets = (networksFound + maxNetworksPerPacket - 1) / maxNetworksPerPacket;
+  
+  for (int packet = 0; packet < packets; packet++) {
+    DynamicJsonDocument doc(1024);
+    doc["status"] = "scan_results";
+    doc["packet"] = packet + 1;
+    doc["total_packets"] = packets;
+    doc["networks_found"] = networksFound;
+    
+    JsonArray networks = doc.createNestedArray("networks");
+    
+    int startIdx = packet * maxNetworksPerPacket;
+    int endIdx = min(startIdx + maxNetworksPerPacket, networksFound);
+    
+    for (int i = startIdx; i < endIdx; i++) {
+      JsonObject network = networks.createNestedObject();
+      network["ssid"] = WiFi.SSID(i);
+      network["rssi"] = WiFi.RSSI(i);
+      network["encryption"] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+    }
+    
+    String jsonString;
+    serializeJson(doc, jsonString);
+    
+    pCharacteristic->setValue(jsonString.c_str());
+    pCharacteristic->notify();
+    
+    // Small delay to ensure packets are received properly
+    delay(100);
+  }
+  
+  // Clean up scan results to free memory
+  WiFi.scanDelete();
+}
+
 void updateSensorData() {
   if (pCharacteristic == nullptr) {
     return;
@@ -167,6 +265,8 @@ void updateSensorData() {
     doc["ip_address"] = WiFi.localIP().toString();
     doc["rssi"] = WiFi.RSSI();
   }
+  
+  doc["status"] = "sensor_update";
   
   // Serialize JSON to string
   String jsonString;

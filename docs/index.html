@@ -9,6 +9,40 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Add Material icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        .network-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .network-item:hover {
+            background-color: #f8f9fa;
+        }
+        .network-item.selected {
+            background-color: #e3f2fd;
+        }
+        .signal-strength {
+            display: inline-block;
+            margin-right: 5px;
+        }
+        .signal-strong {
+            color: #2e7d32;
+        }
+        .signal-medium {
+            color: #ff9800;
+        }
+        .signal-weak {
+            color: #f44336;
+        }
+        #wifiNetworksList {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -42,17 +76,26 @@
                         <h2>WiFi Configuration</h2>
                     </div>
                     <div class="card-body">
+                        <button id="wifiScanButton" class="btn btn-primary mb-3">
+                            <span class="material-icons">wifi_find</span> Scan for WiFi Networks
+                        </button>
+                        
+                        <div id="wifiNetworksList"></div>
+                        
                         <form id="configForm">
                             <div class="mb-3">
                                 <label for="wifiSSID" class="form-label">WiFi SSID</label>
-                                <input type="text" class="form-control" id="wifiSSID">
+                                <input type="text" class="form-control" id="wifiSSID" required>
                             </div>
                             <div class="mb-3">
                                 <label for="wifiPassword" class="form-label">WiFi Password</label>
                                 <input type="password" class="form-control" id="wifiPassword">
+                                <div class="form-text">Leave empty for open networks</div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Save Configuration</button>
+                            <button type="submit" class="btn btn-success">Connect to WiFi</button>
                         </form>
+                        
+                        <div id="wifiConnectionStatus" class="mt-3"></div>
                     </div>
                 </div>
             </div>

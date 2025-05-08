@@ -14,9 +14,12 @@ class UIController {
         this.statusElement = document.getElementById('status');
         this.configSection = document.getElementById('configSection');
         
-        // Form elements
+        // WiFi form elements
+        this.wifiScanButton = document.getElementById('wifiScanButton');
+        this.wifiNetworksList = document.getElementById('wifiNetworksList');
         this.wifiSSIDInput = document.getElementById('wifiSSID');
         this.wifiPasswordInput = document.getElementById('wifiPassword');
+        this.wifiConnectionStatus = document.getElementById('wifiConnectionStatus');
         
         // Sensor data elements
         this.temperatureElement = document.getElementById('temperature');
@@ -26,6 +29,9 @@ class UIController {
         // Modal elements
         this.messageModal = new bootstrap.Modal(document.getElementById('messageModal'));
         this.modalMessage = document.getElementById('modalMessage');
+        
+        // WiFi scan results storage
+        this.wifiNetworks = [];
         
         // Register event listeners
         this.registerEventListeners();
@@ -46,10 +52,15 @@ class UIController {
             event.preventDefault();
             this.saveConfiguration();
         });
+        
+        // WiFi scan button click
+        if (this.wifiScanButton) {
+            this.wifiScanButton.addEventListener('click', () => this.scanWiFiNetworks());
+        }
     }
     
     /**
-     * Register BLE service event listeners
+     * Register BLE service listeners
      */
     registerBLEListeners() {
         // Connection listener
@@ -73,6 +84,152 @@ class UIController {
         this.bleService.addDataUpdateListener((data) => {
             this.updateUI(data);
         });
+        
+        // WiFi scan results listener
+        this.bleService.addWiFiScanListener((data) => {
+            this.handleWiFiScanResults(data);
+        });
+    }
+    
+    /**
+     * Handle WiFi scan results from ESP32
+     * @param {Object} data - Scan results data
+     */
+    handleWiFiScanResults(data) {
+        console.log('Received WiFi scan data:', data);
+        
+        if (data.status === 'scanning') {
+            // Show scanning in progress
+            this.wifiNetworksList.innerHTML = '<div class="alert alert-info">Scanning for networks...</div>';
+            this.wifiNetworks = [];
+            return;
+        }
+        
+        if (data.status === 'scan_complete' && data.networks_found === 0) {
+            // No networks found
+            this.wifiNetworksList.innerHTML = '<div class="alert alert-warning">No networks found</div>';
+            return;
+        }
+        
+        if (data.status === 'scan_results') {
+            // Store networks from this packet
+            if (data.packet === 1) {
+                this.wifiNetworks = [];
+            }
+            
+            // Add networks from this packet to our collection
+            data.networks.forEach(network => {
+                this.wifiNetworks.push(network);
+            });
+            
+            // If this is the last packet, display all networks
+            if (data.packet === data.total_packets) {
+                this.displayWiFiNetworks();
+            }
+        }
+    }
+    
+    /**
+     * Display WiFi networks in the UI
+     */
+    displayWiFiNetworks() {
+        if (this.wifiNetworks.length === 0) {
+            this.wifiNetworksList.innerHTML = '<div class="alert alert-warning">No networks found</div>';
+            return;
+        }
+        
+        // Sort networks by signal strength (RSSI)
+        this.wifiNetworks.sort((a, b) => b.rssi - a.rssi);
+        
+        this.wifiNetworksList.innerHTML = '';
+        
+        this.wifiNetworks.forEach(network => {
+            const networkItem = document.createElement('div');
+            networkItem.className = 'network-item';
+            
+            // Create signal strength icon class based on RSSI
+            let signalClass = 'signal-weak';
+            if (network.rssi > -67) {
+                signalClass = 'signal-strong';
+            } else if (network.rssi > -80) {
+                signalClass = 'signal-medium';
+            }
+            
+            // Create lock icon if network is encrypted
+            const lockIcon = network.encryption ? 
+                '<span class="material-icons">lock</span>' : 
+                '<span class="material-icons">lock_open</span>';
+            
+            networkItem.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="network-name">${network.ssid}</span>
+                    <div>
+                        <span class="signal-strength ${signalClass}">
+                            <span class="material-icons">wifi</span>
+                        </span>
+                        ${lockIcon}
+                    </div>
+                </div>
+            `;
+            
+            // Add click event to select this network
+            networkItem.addEventListener('click', () => {
+                this.selectWiFiNetwork(network);
+            });
+            
+            this.wifiNetworksList.appendChild(networkItem);
+        });
+    }
+    
+    /**
+     * Select a WiFi network from the list
+     * @param {Object} network - The selected network
+     */
+    selectWiFiNetwork(network) {
+        console.log('Selected network:', network);
+        
+        // Highlight the selected network
+        const networkItems = this.wifiNetworksList.querySelectorAll('.network-item');
+        networkItems.forEach(item => {
+            item.classList.remove('selected');
+        });
+        
+        // Find the element that represents this network and add selected class
+        networkItems.forEach(item => {
+            const nameElement = item.querySelector('.network-name');
+            if (nameElement && nameElement.textContent === network.ssid) {
+                item.classList.add('selected');
+            }
+        });
+        
+        // Fill in the SSID
+        this.wifiSSIDInput.value = network.ssid;
+        
+        // Focus on password field if encryption is enabled
+        if (network.encryption) {
+            this.wifiPasswordInput.focus();
+        } else {
+            // No password needed for open networks
+            this.wifiPasswordInput.value = '';
+        }
+    }
+    
+    /**
+     * Scan for WiFi networks
+     */
+    async scanWiFiNetworks() {
+        try {
+            if (!this.bleService.isConnected()) {
+                this.showMessage('Error', 'Please connect to the ESP32 device first');
+                return;
+            }
+            
+            // Send scan command
+            await this.bleService.scanWiFiNetworks();
+            
+        } catch (error) {
+            this.showMessage('Error', `Failed to scan for WiFi networks: ${error.message}`);
+        }
     }
     
     /**
@@ -87,9 +244,28 @@ class UIController {
             return;
         }
         
+        // Update WiFi connection status if available
+        if (data.wifi_connected !== undefined && this.wifiConnectionStatus) {
+            if (data.wifi_connected) {
+                this.wifiConnectionStatus.innerHTML = `
+                    <div class="alert alert-success">
+                        Connected to ${data.wifi_ssid}<br>
+                        IP: ${data.ip_address || 'Unknown'}
+                    </div>
+                `;
+            } else {
+                this.wifiConnectionStatus.innerHTML = `
+                    <div class="alert alert-warning">
+                        Not connected to WiFi
+                    </div>
+                `;
+            }
+        }
+        
         // If it's a config object with WiFi settings
-        if (data.wifi_ssid !== undefined) {
+        if (data.wifi_ssid !== undefined && this.wifiSSIDInput) {
             this.wifiSSIDInput.value = data.wifi_ssid || '';
+            
             if (data.wifi_password) {
                 this.wifiPasswordInput.value = data.wifi_password === '*****' ? '' : data.wifi_password;
             }
@@ -191,7 +367,7 @@ class UIController {
             
             await this.bleService.sendData(config);
             
-            this.showMessage('Success', 'Configuration sent to device');
+            this.showMessage('Success', 'WiFi configuration sent to device. Attempting to connect...');
         } catch (error) {
             this.showMessage('Error', `Failed to send configuration: ${error.message}`);
         }

@@ -18,6 +18,7 @@ class BLEService {
         this.connectionListeners = [];
         this.disconnectionListeners = [];
         this.dataUpdateListeners = [];
+        this.wifiScanListeners = [];
     }
     
     /**
@@ -197,6 +198,13 @@ class BLEService {
         try {
             // Try to parse as JSON
             data = JSON.parse(dataJson);
+            
+            // Check for WiFi scan results
+            if (data.status === 'scan_results' || data.status === 'scanning' || data.status === 'scan_complete') {
+                this.notifyWiFiScanListeners(data);
+                return;
+            }
+            
         } catch (e) {
             // If not JSON, return as string value
             data = { value: dataJson };
@@ -204,6 +212,25 @@ class BLEService {
         
         // Notify all data update listeners
         this.notifyDataUpdateListeners(data);
+    }
+    
+    /**
+     * Scan for WiFi networks via ESP32
+     * @returns {Promise<boolean>} Success status
+     */
+    async scanWiFiNetworks() {
+        try {
+            if (!this.isConnected()) {
+                throw new Error('Not connected to device');
+            }
+            
+            const command = { command: 'scan_wifi' };
+            return this.sendData(command);
+            
+        } catch (error) {
+            console.error('Error scanning WiFi networks:', error);
+            throw error;
+        }
     }
     
     /**
@@ -235,6 +262,13 @@ class BLEService {
         this.dataUpdateListeners.push(listener);
     }
     
+    addWiFiScanListener(listener) {
+        if (!this.wifiScanListeners) {
+            this.wifiScanListeners = [];
+        }
+        this.wifiScanListeners.push(listener);
+    }
+    
     notifyConnectionListeners() {
         this.connectionListeners.forEach(listener => listener(this.device));
     }
@@ -245,5 +279,11 @@ class BLEService {
     
     notifyDataUpdateListeners(data) {
         this.dataUpdateListeners.forEach(listener => listener(data));
+    }
+    
+    notifyWiFiScanListeners(data) {
+        if (!this.wifiScanListeners) return;
+        
+        this.wifiScanListeners.forEach(listener => listener(data));
     }
 }
