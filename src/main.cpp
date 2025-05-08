@@ -1,58 +1,54 @@
 #include <Arduino.h>
-#include <ArduinoLog.h>
-#include "ConfigManager.h"
-#include "BLEService.h"
+#include <NimBLEDevice.h>
 
-// Define LED pin for ESP32 DevKit
-#define LED_PIN 2 // Built-in LED on most ESP32 development boards
+#define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
+#define CHARACTERISTIC_UUID "abcd1234-5678-90ab-cdef-1234567890ab"
 
-// Create instances of our classes
-ConfigManager configManager;
-BLEService* bleService;
+NimBLECharacteristic *pCharacteristic;
+
+class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* pServer) {
+    Serial.println("Client connected");
+  }
+  void onDisconnect(NimBLEServer* pServer) {
+    Serial.println("Client disconnected");
+  }
+};
+
+class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar) {
+    std::string val = pChar->getValue();
+    Serial.print("Received: ");
+    Serial.println(val.c_str());
+  }
+};
 
 void setup() {
-  // Initialize serial communication
   Serial.begin(115200);
-  Log.begin(LOG_LEVEL_NOTICE, &Serial);
-  
-  Log.notice("ESP32 Web Config Firmware starting..." CR);
-  
-  // Set up LED pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW); // Start with LED off
-  
-  // Initialize config manager
-  if (!configManager.begin()) {
-    Log.error("Failed to initialize ConfigManager" CR);
-  }
-  
-  // Initialize BLE service
-  bleService = new BLEService(configManager);
-  if (!bleService->begin()) {
-    Log.error("Failed to initialize BLEService" CR);
-  }
-  
-  Log.notice("Device initialized with name: %s" CR, configManager.getDeviceName().c_str());
-  
-  // Turn on LED if enabled in config
-  if (configManager.isLedEnabled()) {
-    digitalWrite(LED_PIN, HIGH);
-  }
+
+  NimBLEDevice::init("ESP32_NimBLE");
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+
+  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      NIMBLE_PROPERTY::READ |
+                      NIMBLE_PROPERTY::WRITE
+                    );
+
+  pCharacteristic->setValue("Hello");
+  pCharacteristic->setCallbacks(new CharacteristicCallbacks());
+
+  pService->start();
+  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->start();
+
+  Serial.println("NimBLE server is running...");
 }
 
 void loop() {
-  // Update BLE service to handle periodic tasks
-  if (bleService) {
-    bleService->update();
-  }
-  
-  // Check if LED state needs to be updated based on configuration
-  static bool previousLedState = configManager.isLedEnabled();
-  if (previousLedState != configManager.isLedEnabled()) {
-    digitalWrite(LED_PIN, configManager.isLedEnabled() ? HIGH : LOW);
-    previousLedState = configManager.isLedEnabled();
-  }
-  
-  // Add any other application logic here
-  delay(10); // Small delay to prevent watchdog resets
+  // nothing needed here
 }
