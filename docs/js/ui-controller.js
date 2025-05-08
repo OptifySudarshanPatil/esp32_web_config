@@ -15,11 +15,6 @@ class UIController {
         this.configSection = document.getElementById('configSection');
         
         // Form elements
-        this.deviceNameInput = document.getElementById('deviceName');
-        this.refreshRateInput = document.getElementById('refreshRate');
-        this.ledEnabledInput = document.getElementById('ledEnabled');
-        this.sensorUpdateIntervalInput = document.getElementById('sensorUpdateInterval');
-        this.calibrationFactorInput = document.getElementById('calibrationFactor');
         this.wifiSSIDInput = document.getElementById('wifiSSID');
         this.wifiPasswordInput = document.getElementById('wifiPassword');
         
@@ -27,12 +22,6 @@ class UIController {
         this.temperatureElement = document.getElementById('temperature');
         this.humidityElement = document.getElementById('humidity');
         this.batteryLevelElement = document.getElementById('batteryLevel');
-        this.uptimeElement = document.getElementById('uptime');
-        
-        // OTA update elements
-        this.firmwareFileInput = document.getElementById('firmwareFile');
-        this.otaProgressContainer = document.getElementById('otaProgress');
-        this.otaProgressBar = this.otaProgressContainer.querySelector('.progress-bar');
         
         // Modal elements
         this.messageModal = new bootstrap.Modal(document.getElementById('messageModal'));
@@ -57,12 +46,6 @@ class UIController {
             event.preventDefault();
             this.saveConfiguration();
         });
-        
-        // OTA form submit
-        this.otaForm.addEventListener('submit', (event) => {
-            event.preventDefault();
-            this.performOTAUpdate();
-        });
     }
     
     /**
@@ -86,21 +69,44 @@ class UIController {
             this.clearDeviceList();
         });
         
-        // Config update listener
-        this.bleService.addConfigUpdateListener((config) => {
-            this.updateConfigForm(config);
+        // Data update listener
+        this.bleService.addDataUpdateListener((data) => {
+            this.updateUI(data);
         });
+    }
+    
+    /**
+     * Update UI with data from device
+     * @param {Object} data - Data from device
+     */
+    updateUI(data) {
+        // Handle different data formats
+        if (typeof data === 'string') {
+            // Simple string display
+            this.showMessage('Device Data', data);
+            return;
+        }
         
-        // Sensor update listener
-        this.bleService.addSensorUpdateListener((data) => {
-            this.updateSensorDisplay(data);
-        });
+        // If it's a config object with WiFi settings
+        if (data.wifi_ssid !== undefined) {
+            this.wifiSSIDInput.value = data.wifi_ssid || '';
+            if (data.wifi_password) {
+                this.wifiPasswordInput.value = data.wifi_password === '*****' ? '' : data.wifi_password;
+            }
+        }
         
-        // OTA update listener
-        this.bleService.addOTAUpdateListener((result) => {
-            this.showMessage('OTA Update', `Status: ${result.status}<br>Message: ${result.message}`);
-            this.otaProgressContainer.style.display = 'none';
-        });
+        // If it has sensor readings
+        if (data.temperature !== undefined && this.temperatureElement) {
+            this.temperatureElement.textContent = data.temperature.toFixed(1) + '°C';
+        }
+        
+        if (data.humidity !== undefined && this.humidityElement) {
+            this.humidityElement.textContent = data.humidity.toFixed(1) + '%';
+        }
+        
+        if (data.batteryLevel !== undefined && this.batteryLevelElement) {
+            this.batteryLevelElement.textContent = data.batteryLevel + '%';
+        }
     }
     
     /**
@@ -174,119 +180,20 @@ class UIController {
     }
     
     /**
-     * Update the config form with values from the device
-     * @param {Object} config - Configuration data
-     */
-    updateConfigForm(config) {
-        this.deviceNameInput.value = config.deviceName || '';
-        this.refreshRateInput.value = config.refreshRate || 5000;
-        this.ledEnabledInput.checked = config.ledEnabled || false;
-        this.sensorUpdateIntervalInput.value = config.sensorUpdateInterval || 60;
-        this.calibrationFactorInput.value = config.calibrationFactor || 1.0;
-        this.wifiSSIDInput.value = config.wifiSSID || '';
-        this.wifiPasswordInput.value = config.wifiPassword === '****' ? '' : (config.wifiPassword || '');
-    }
-    
-    /**
      * Save configuration to the device
      */
     async saveConfiguration() {
         try {
             const config = {
-                deviceName: this.deviceNameInput.value,
-                refreshRate: parseInt(this.refreshRateInput.value),
-                ledEnabled: this.ledEnabledInput.checked,
-                sensorUpdateInterval: parseInt(this.sensorUpdateIntervalInput.value),
-                calibrationFactor: parseFloat(this.calibrationFactorInput.value),
-                wifiSSID: this.wifiSSIDInput.value,
-                wifiPassword: this.wifiPasswordInput.value
+                wifi_ssid: this.wifiSSIDInput.value,
+                wifi_password: this.wifiPasswordInput.value
             };
             
-            await this.bleService.updateConfig(config);
+            await this.bleService.sendData(config);
             
-            this.showMessage('Success', 'Configuration updated successfully');
+            this.showMessage('Success', 'Configuration sent to device');
         } catch (error) {
-            this.showMessage('Error', `Failed to update configuration: ${error.message}`);
-        }
-    }
-    
-    /**
-     * Update the sensor display with new data
-     * @param {Object} data - Sensor data
-     */
-    updateSensorDisplay(data) {
-        if (data.temperature !== undefined) {
-            this.temperatureElement.textContent = data.temperature.toFixed(1);
-        }
-        
-        if (data.humidity !== undefined) {
-            this.humidityElement.textContent = data.humidity.toFixed(1);
-        }
-        
-        if (data.batteryLevel !== undefined) {
-            this.batteryLevelElement.textContent = data.batteryLevel.toFixed(0);
-        }
-        
-        if (data.timestamp !== undefined) {
-            this.uptimeElement.textContent = this.formatTime(data.timestamp);
-        }
-    }
-    
-    /**
-     * Format time in milliseconds to a human-readable string
-     * @param {number} milliseconds - Time in milliseconds
-     * @returns {string} Formatted time string
-     */
-    formatTime(milliseconds) {
-        const seconds = Math.floor(milliseconds / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-        
-        if (hours > 0) {
-            return `${hours}h ${minutes % 60}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${seconds % 60}s`;
-        } else {
-            return `${seconds}s`;
-        }
-    }
-    
-    /**
-     * Perform OTA update with firmware file
-     */
-    async performOTAUpdate() {
-        const fileInput = this.firmwareFileInput;
-        
-        if (fileInput.files.length === 0) {
-            this.showMessage('Error', 'Please select a firmware file to upload');
-            return;
-        }
-        
-        const file = fileInput.files[0];
-        
-        try {
-            // Show progress bar
-            this.otaProgressContainer.style.display = 'block';
-            this.otaProgressBar.style.width = '0%';
-            this.otaProgressBar.textContent = '0%';
-            
-            // Define progress callback function
-            const updateProgress = (progress) => {
-                this.otaProgressBar.style.width = `${progress}%`;
-                this.otaProgressBar.textContent = `${progress}%`;
-            };
-            
-            // Start OTA update
-            const result = await this.bleService.uploadFirmware(file, updateProgress);
-            
-            if (result) {
-                this.showMessage('Success', 'Firmware update completed successfully');
-            } else {
-                this.showMessage('Error', 'Firmware update failed');
-            }
-        } catch (error) {
-            this.showMessage('Error', `Failed to update firmware: ${error.message}`);
-            this.otaProgressContainer.style.display = 'none';
+            this.showMessage('Error', `Failed to send configuration: ${error.message}`);
         }
     }
     
